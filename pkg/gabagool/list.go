@@ -1,6 +1,7 @@
 package gabagool
 
 import (
+	"reflect"
 	"strings"
 	"time"
 
@@ -55,6 +56,13 @@ type ListOptions struct {
 	EmptyMessage      string    // Message shown when Items is empty
 	EmptyMessageColor sdl.Color // Color for empty message
 
+	// Refresh, when set, is called once a frame on the UI goroutine. When it
+	// reports a change, its items and footer replace the list's, keeping the
+	// cursor on the same item (matched by Metadata, else by Text). Publish
+	// from another goroutine through something like an atomic.Value and
+	// load it here.
+	Refresh func() (ListUpdate, bool)
+
 	OnSelect  func(index int, item *MenuItem) // Called when selection changes
 	OnReorder func(from, to int)              // Called when items are reordered
 	OnL1      func(selectedIndex int) int     // Custom handler for L1 button
@@ -62,6 +70,12 @@ type ListOptions struct {
 }
 
 // DefaultListOptions returns a ListOptions with sensible defaults for the given title and items.
+// ListUpdate is what a list shows after a Refresh.
+type ListUpdate struct {
+	Items           []MenuItem
+	FooterHelpItems []FooterHelpItem
+}
+
 func DefaultListOptions(title string, items []MenuItem) ListOptions {
 	return ListOptions{
 		Title:                    title,
@@ -187,6 +201,7 @@ func List(options ListOptions) (*ListResult, error) {
 		}
 
 		lc.handleDirectionalRepeats()
+		lc.refresh(window)
 
 		renderer.SetDrawColor(0, 0, 0, 255)
 		renderer.Clear()
@@ -540,6 +555,66 @@ func (lc *listController) moveSelection(delta int) {
 	lc.scrollTo(newIndex)
 	lc.revealHeadings()
 	lc.updateSelectionState()
+}
+
+// refresh applies the caller's update, if there is one, keeping the cursor
+// on the item it was on.
+func (lc *listController) refresh(window *internal.Window) {
+	if lc.Options.Refresh == nil {
+		return
+	}
+	update, changed := lc.Options.Refresh()
+	if !changed {
+		return
+	}
+	var current *MenuItem
+	if i := lc.Options.SelectedIndex; i >= 0 && i < len(lc.Options.Items) {
+		current = &lc.Options.Items[i]
+	}
+	lc.Options.Items = update.Items
+	lc.Options.FooterHelpItems = update.FooterHelpItems
+	// Scroll offsets are per row and its text; the text cache is keyed by
+	// text, so changed rows draw fresh.
+	lc.itemScrollData = make(map[int]*internal.TextScrollData)
+	lc.SelectedItems = make(map[int]bool)
+	for i := range lc.Options.Items {
+		if lc.Options.Items[i].Selected {
+			lc.SelectedItems[i] = true
+		}
+	}
+
+	index := min(lc.Options.SelectedIndex, max(0, len(lc.Options.Items)-1))
+	if current != nil {
+		if found := sameItemIndex(lc.Options.Items, *current); found >= 0 {
+			index = found
+		}
+	}
+	if next := internal.NextSelectable(len(lc.Options.Items), lc.selectable, index, 1, true); next >= 0 {
+		index = next
+	}
+	lc.Options.SelectedIndex = index
+	lc.Options.MaxVisibleItems = int(lc.calculateMaxVisibleItems(window))
+	if lc.Options.VisibleStartIndex > index {
+		lc.Options.VisibleStartIndex = index
+	}
+	lc.scrollTo(index)
+	lc.revealHeadings()
+	lc.updateSelectionState()
+}
+
+// sameItemIndex finds the item that is the one the cursor was on: the same
+// Metadata when it has some, else the same text.
+func sameItemIndex(items []MenuItem, want MenuItem) int {
+	for i, item := range items {
+		if want.Metadata != nil {
+			if reflect.DeepEqual(item.Metadata, want.Metadata) {
+				return i
+			}
+		} else if item.Text == want.Text {
+			return i
+		}
+	}
+	return -1
 }
 
 func (lc *listController) selectable(i int) bool {
