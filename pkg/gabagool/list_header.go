@@ -93,7 +93,7 @@ func renderListHeader(renderer *sdl.Renderer, header *ListHeader, x, y, width in
 	textY += int32(titleFont.Height())
 	for _, line := range header.Lines {
 		textY += int32(4 * scale)
-		internal.RenderMultilineText(renderer, line, linesFont, l.textWidth, textX, textY, internal.GetTheme().HintColor, constants.TextAlignLeft)
+		internal.RenderMultilineText(renderer, line, linesFont, l.textWidth, textX, textY, internal.MutedTextColor(), constants.TextAlignLeft)
 		textY += wrappedHeight(line, linesFont, l.textWidth)
 	}
 	return y + l.height
