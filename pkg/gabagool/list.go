@@ -872,7 +872,7 @@ func (lc *listController) renderContent(window *internal.Window, visibleItems []
 
 	if lc.Options.Header != nil {
 		x, width := lc.headerBounds(renderer)
-		itemStartY = renderListHeader(renderer, lc.Options.Header, x, itemStartY, width) + lc.headerSpacing()
+		itemStartY = renderListHeader(renderer, lc.Options.Header, x, itemStartY, width, lc.textureCache) + lc.headerSpacing()
 	}
 
 	if len(lc.Options.Items) == 0 {
