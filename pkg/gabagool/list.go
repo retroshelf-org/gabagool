@@ -21,6 +21,8 @@ type ListOptions struct {
 
 	ShowImages bool // Display item images on the right side
 
+	BackgroundColor sdl.Color // Screen background when no item or theme background is drawn; unset keeps the theme's
+
 	InitialMultiSelectMode bool // Start in multi-select mode
 	DisableBackButton      bool // Prevent B button from closing the list
 
@@ -728,10 +730,10 @@ func (lc *listController) renderContent(window *internal.Window, visibleItems []
 		if selectedItem.BackgroundFilename != "" {
 			lc.renderSelectedItemBackground(window, selectedItem.BackgroundFilename)
 		} else {
-			window.RenderBackground()
+			lc.renderBackground(window)
 		}
 	} else {
-		window.RenderBackground()
+		lc.renderBackground(window)
 	}
 
 	statusBarWidth := calculateStatusBarWidth(internal.Fonts.SmallFont, lc.Options.StatusBar)
@@ -764,6 +766,17 @@ func (lc *listController) renderContent(window *internal.Window, visibleItems []
 	}
 
 	renderFooter(renderer, internal.Fonts.SmallFont, footerItems, lc.Options.Margins.Bottom, true, centerSingleItem)
+}
+
+// renderBackground draws the theme's background, or the list's colour when
+// it has one and the theme draws none.
+func (lc *listController) renderBackground(window *internal.Window) {
+	if bg := lc.Options.BackgroundColor; bg.A > 0 && window.Background == nil {
+		window.Renderer.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
+		window.Renderer.Clear()
+		return
+	}
+	window.RenderBackground()
 }
 
 func (lc *listController) imageIsDisplayed() bool {
