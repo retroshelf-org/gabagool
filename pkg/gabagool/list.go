@@ -56,8 +56,11 @@ type ListOptions struct {
 	EmptyMessage      string    // Message shown when Items is empty
 	EmptyMessageColor sdl.Color // Color for empty message
 
+	// Header, when set, is a status block between the title and the items.
+	Header *ListHeader
+
 	// Refresh, when set, is called once a frame on the UI goroutine. When it
-	// reports a change, its items and footer replace the list's, keeping the
+	// reports a change, its items, footer and header replace the list's, keeping the
 	// cursor on the same item (matched by Metadata, else by Text). Publish
 	// from another goroutine through something like an atomic.Value and
 	// load it here.
@@ -74,6 +77,7 @@ type ListOptions struct {
 type ListUpdate struct {
 	Items           []MenuItem
 	FooterHelpItems []FooterHelpItem
+	Header          *ListHeader
 }
 
 func DefaultListOptions(title string, items []MenuItem) ListOptions {
@@ -573,6 +577,7 @@ func (lc *listController) refresh(window *internal.Window) {
 	}
 	lc.Options.Items = update.Items
 	lc.Options.FooterHelpItems = update.FooterHelpItems
+	lc.Options.Header = update.Header
 	// Scroll offsets are per row and its text; the text cache is keyed by
 	// text, so changed rows draw fresh.
 	lc.itemScrollData = make(map[int]*internal.TextScrollData)
@@ -615,6 +620,16 @@ func sameItemIndex(items []MenuItem, want MenuItem) int {
 		}
 	}
 	return -1
+}
+
+// headerBounds is where a header sits: the list's margins, across the screen.
+func (lc *listController) headerBounds(renderer *sdl.Renderer) (x, width int32) {
+	screenWidth, _, _ := renderer.GetOutputSize()
+	return lc.Options.Margins.Left, screenWidth - lc.Options.Margins.Left - lc.Options.Margins.Right
+}
+
+func (lc *listController) headerSpacing() int32 {
+	return int32(12 * internal.GetScaleFactor())
 }
 
 func (lc *listController) selectable(i int) bool {
@@ -854,6 +869,11 @@ func (lc *listController) renderContent(window *internal.Window, visibleItems []
 	}
 
 	renderStatusBar(renderer, internal.Fonts.SmallFont, lc.Options.StatusBar, lc.Options.Margins)
+
+	if lc.Options.Header != nil {
+		x, width := lc.headerBounds(renderer)
+		itemStartY = renderListHeader(renderer, lc.Options.Header, x, itemStartY, width) + lc.headerSpacing()
+	}
 
 	if len(lc.Options.Items) == 0 {
 		lc.renderEmptyMessage(renderer, internal.Fonts.MediumFont, itemStartY)
@@ -1213,7 +1233,13 @@ func (lc *listController) calculateMaxVisibleItems(window *internal.Window) int3
 
 	footerHeight := int32(float32(50) * scaleFactor)
 
-	availableHeight := screenHeight - titleHeight - footerHeight - (lc.StartY * 2)
+	var headerHeight int32
+	if lc.Options.Header != nil {
+		_, width := lc.headerBounds(window.Renderer)
+		headerHeight = layoutListHeader(lc.Options.Header, width).height + lc.headerSpacing()
+	}
+
+	availableHeight := screenHeight - titleHeight - headerHeight - footerHeight - (lc.StartY * 2)
 
 	itemHeightWithSpacing := pillHeight + lc.Options.ItemSpacing
 	maxItems := availableHeight/itemHeightWithSpacing - 1
