@@ -728,6 +728,7 @@ func (olc *optionsListController) showListPicker() {
 	listOpts := DefaultListOptions(item.Item.Text, menuItems)
 	listOpts.SelectedIndex = item.SelectedOption
 	listOpts.UseSmallTitle = true
+	listOpts.BackgroundColor = olc.Settings.BackgroundColor
 	listOpts.FooterHelpItems = []FooterHelpItem{
 		{ButtonName: "B", HelpText: "Back"},
 		{ButtonName: "A", HelpText: "Select"},
