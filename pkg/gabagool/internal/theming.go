@@ -36,6 +36,15 @@ func DefaultTheme() Theme {
 	}
 }
 
+// MutedTextColor is the theme's text colour at reduced opacity, for headings
+// and secondary lines. HintColor is meant for text on pills, which can be
+// the background's own colour.
+func MutedTextColor() sdl.Color {
+	c := GetTheme().TextColor
+	c.A = 150
+	return c
+}
+
 // SetTheme sets the active theme for the framework.
 func SetTheme(theme Theme) {
 	currentTheme = theme
