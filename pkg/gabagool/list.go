@@ -1262,7 +1262,7 @@ func (lc *listController) formatItemText(item MenuItem, multiSelect bool) string
 
 func (lc *listController) getItemColors(item MenuItem) (textColor, bgColor sdl.Color) {
 	if item.NotSelectable {
-		return internal.GetTheme().HintColor, sdl.Color{}
+		return internal.MutedTextColor(), sdl.Color{}
 	}
 	if item.Focused && item.Selected {
 		return internal.GetTheme().HighlightedTextColor, internal.GetTheme().HighlightColor
