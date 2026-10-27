@@ -26,15 +26,19 @@ type ProcessMessageOptions struct {
 	ShowThemeBackground bool
 	ShowProgressBar     bool
 	Progress            *atomic.Float64
-	ProcessInput        bool                    // If true, process input events (enables chord/sequence detection)
-	CancelButton        constants.VirtualButton // If set, pressing this button exits with ErrCancelled
-	FooterHelpItems     []FooterHelpItem        // Button hints shown in footer
+	// Message, when set and not empty, replaces the message argument and is
+	// read every frame, so the text can follow the work ("Importing 2 of 5").
+	Message         *atomic.String
+	ProcessInput    bool                    // If true, process input events (enables chord/sequence detection)
+	CancelButton    constants.VirtualButton // If set, pressing this button exits with ErrCancelled
+	FooterHelpItems []FooterHelpItem        // Button hints shown in footer
 }
 
 type processMessage struct {
 	window          *internal.Window
 	showBG          bool
 	message         string
+	liveMessage     *atomic.String
 	isProcessing    bool
 	completeTime    time.Time
 	imageTexture    *sdl.Texture
@@ -57,6 +61,7 @@ func ProcessMessage[T any](message string, options ProcessMessageOptions, fn fun
 		imageWidth:      options.ImageWidth,
 		imageHeight:     options.ImageHeight,
 		message:         message,
+		liveMessage:     options.Message,
 		isProcessing:    true,
 		showProgressBar: options.ShowProgressBar,
 		progress:        options.Progress,
@@ -226,7 +231,8 @@ func (p *processMessage) render(renderer *sdl.Renderer) {
 		imgW, imgH = p.imageDrawSize()
 	}
 
-	messagePresent := strings.TrimSpace(p.message) != ""
+	message := p.currentMessage()
+	messagePresent := strings.TrimSpace(message) != ""
 
 	switch {
 	case p.showProgressBar:
@@ -237,7 +243,7 @@ func (p *processMessage) render(renderer *sdl.Renderer) {
 		barHeight := int32(40)
 		totalHeight := (int32(font.Height()) * 2) + spacing + barHeight
 		messageY := (winH - totalHeight) / 2
-		internal.RenderMultilineText(renderer, p.message, font, maxWidth, winW/2, messageY, white)
+		internal.RenderMultilineText(renderer, message, font, maxWidth, winW/2, messageY, white)
 		p.renderProgressBar(renderer, messageY, spacing)
 
 	case p.imageTexture != nil && messagePresent:
@@ -245,23 +251,34 @@ func (p *processMessage) render(renderer *sdl.Renderer) {
 		// the two never overlap — they otherwise both anchor to the window's
 		// midpoint and draw on top of each other.
 		const gap = 24
-		textH := internal.MultilineTextHeight(p.message, font, maxWidth)
+		textH := internal.MultilineTextHeight(message, font, maxWidth)
 		imgY, textCenterY := internal.StackedLayout(winH, imgH, textH, gap)
 		renderer.Copy(p.imageTexture, nil, &sdl.Rect{X: (winW - imgW) / 2, Y: imgY, W: imgW, H: imgH})
-		internal.RenderMultilineText(renderer, p.message, font, maxWidth, winW/2, textCenterY, white)
+		internal.RenderMultilineText(renderer, message, font, maxWidth, winW/2, textCenterY, white)
 
 	default:
 		if p.imageTexture != nil {
 			renderer.Copy(p.imageTexture, nil, &sdl.Rect{X: (winW - imgW) / 2, Y: (winH - imgH) / 2, W: imgW, H: imgH})
 		}
 		if messagePresent {
-			internal.RenderMultilineText(renderer, p.message, font, maxWidth, winW/2, winH/2, white)
+			internal.RenderMultilineText(renderer, message, font, maxWidth, winW/2, winH/2, white)
 		}
 	}
 
 	if len(p.footerHelpItems) > 0 {
 		renderFooter(renderer, internal.Fonts.SmallFont, p.footerHelpItems, 30, true, len(p.footerHelpItems) == 1)
 	}
+}
+
+// currentMessage is the live message when one is set, else the message the
+// screen opened with.
+func (p *processMessage) currentMessage() string {
+	if p.liveMessage != nil {
+		if live := p.liveMessage.Load(); live != "" {
+			return live
+		}
+	}
+	return p.message
 }
 
 func (p *processMessage) renderProgressBar(renderer *sdl.Renderer, messageY, spacing int32) {
