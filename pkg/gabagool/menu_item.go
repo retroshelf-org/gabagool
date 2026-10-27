@@ -7,6 +7,7 @@ type MenuItem struct {
 	Focused            bool        // Whether this item has focus (managed by List)
 	NotMultiSelectable bool        // Prevent this item from being multi-selected
 	NotReorderable     bool        // Prevent this item from being moved in reorder mode
+	NotSelectable      bool        // A heading or a line to read: the cursor skips it and it draws muted
 	Metadata           interface{} // Application-specific data attached to the item
 	ImageFilename      string      // Path to image displayed when this item is focused
 	BackgroundFilename string      // Path to background image when this item is focused

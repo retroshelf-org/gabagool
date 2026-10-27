@@ -112,6 +112,9 @@ func newListController(options ListOptions) *listController {
 	if options.SelectedIndex < 0 || options.SelectedIndex >= len(options.Items) {
 		options.SelectedIndex = 0
 	}
+	if first := internal.NextSelectable(len(options.Items), func(i int) bool { return !options.Items[i].NotSelectable }, options.SelectedIndex, 1, true); first >= 0 {
+		options.SelectedIndex = first
+	}
 
 	for i := range options.Items {
 		if options.Items[i].Selected {
@@ -325,6 +328,9 @@ func (lc *listController) handleActionButtons(button constants.VirtualButton, ru
 		return
 	}
 
+	if button == constants.VirtualButtonA && len(lc.Options.Items) > 0 && !lc.selectable(lc.Options.SelectedIndex) {
+		return
+	}
 	if button == constants.VirtualButtonA {
 		if lc.MultiSelect && len(lc.Options.Items) > 0 {
 			lc.toggleSelection(lc.Options.SelectedIndex)
@@ -517,9 +523,37 @@ func (lc *listController) moveSelection(delta int) {
 		}
 	}
 
+	// Rows the cursor can't rest on are stepped over in the direction of
+	// travel; a page jump lands on the nearest row it can.
+	if delta == 1 || delta == -1 {
+		newIndex = internal.NextSelectable(len(lc.Options.Items), lc.selectable, newIndex, delta, true)
+	} else if found := internal.NextSelectable(len(lc.Options.Items), lc.selectable, newIndex, 1, false); found >= 0 {
+		newIndex = found
+	} else {
+		newIndex = internal.NextSelectable(len(lc.Options.Items), lc.selectable, newIndex, -1, false)
+	}
+	if newIndex < 0 {
+		return
+	}
+
 	lc.Options.SelectedIndex = newIndex
 	lc.scrollTo(newIndex)
+	lc.revealHeadings()
 	lc.updateSelectionState()
+}
+
+func (lc *listController) selectable(i int) bool {
+	return !lc.Options.Items[i].NotSelectable
+}
+
+// revealHeadings scrolls up over the unselectable rows just above the top of
+// the view, so a section's heading shows with its first row.
+func (lc *listController) revealHeadings() {
+	for lc.Options.VisibleStartIndex > 0 &&
+		lc.Options.Items[lc.Options.VisibleStartIndex-1].NotSelectable &&
+		lc.Options.SelectedIndex < lc.Options.VisibleStartIndex-1+lc.Options.MaxVisibleItems {
+		lc.Options.VisibleStartIndex--
+	}
 }
 
 func (lc *listController) moveItem(delta int) {
@@ -613,7 +647,7 @@ func (lc *listController) toggleMultiSelect() {
 }
 
 func (lc *listController) toggleSelection(index int) {
-	if index < 0 || index >= len(lc.Options.Items) || lc.Options.Items[index].NotMultiSelectable {
+	if index < 0 || index >= len(lc.Options.Items) || lc.Options.Items[index].NotMultiSelectable || lc.Options.Items[index].NotSelectable {
 		return
 	}
 
@@ -627,7 +661,7 @@ func (lc *listController) toggleSelection(index int) {
 
 func (lc *listController) selectAll() {
 	for i := range lc.Options.Items {
-		if !lc.Options.Items[i].NotMultiSelectable {
+		if !lc.Options.Items[i].NotMultiSelectable && !lc.Options.Items[i].NotSelectable {
 			lc.Options.Items[i].Selected = true
 			lc.SelectedItems[i] = true
 		}
@@ -812,12 +846,13 @@ func (lc *listController) renderItems(renderer *sdl.Renderer, font *ttf.Font, vi
 			internal.DrawRoundedRect(renderer, &pillRect, int32(float32(30)*scaleFactor), bgColor)
 		}
 
-		lc.renderItemText(renderer, font, itemText, item.Focused, globalIndex, itemY, pillHeight, maxTextWidth)
+		lc.renderItemText(renderer, font, itemText, item, globalIndex, itemY, pillHeight, maxTextWidth)
 	}
 }
 
-func (lc *listController) renderItemText(renderer *sdl.Renderer, font *ttf.Font, text string, focused bool, globalIndex int, itemY, pillHeight, maxWidth int32) {
-	textColor := lc.getTextColor(focused)
+func (lc *listController) renderItemText(renderer *sdl.Renderer, font *ttf.Font, text string, item MenuItem, globalIndex int, itemY, pillHeight, maxWidth int32) {
+	focused := item.Focused
+	textColor, _ := lc.getItemColors(item)
 
 	if focused && lc.shouldScroll(font, text, maxWidth) {
 		lc.renderScrollingText(renderer, font, text, textColor, globalIndex, itemY, pillHeight, maxWidth)
@@ -1151,6 +1186,9 @@ func (lc *listController) formatItemText(item MenuItem, multiSelect bool) string
 }
 
 func (lc *listController) getItemColors(item MenuItem) (textColor, bgColor sdl.Color) {
+	if item.NotSelectable {
+		return internal.GetTheme().HintColor, sdl.Color{}
+	}
 	if item.Focused && item.Selected {
 		return internal.GetTheme().HighlightedTextColor, internal.GetTheme().HighlightColor
 	} else if item.Focused {
@@ -1159,13 +1197,6 @@ func (lc *listController) getItemColors(item MenuItem) (textColor, bgColor sdl.C
 		return internal.GetTheme().TextColor, sdl.Color{R: 255, G: 0, B: 0, A: 0}
 	}
 	return internal.GetTheme().TextColor, sdl.Color{}
-}
-
-func (lc *listController) getTextColor(focused bool) sdl.Color {
-	if focused {
-		return internal.GetTheme().HighlightedTextColor
-	}
-	return internal.GetTheme().TextColor
 }
 
 func (lc *listController) filterConfirmButton(items []FooterHelpItem) []FooterHelpItem {
