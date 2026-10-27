@@ -238,7 +238,7 @@ func (p *processMessage) render(renderer *sdl.Renderer) {
 		totalHeight := (int32(font.Height()) * 2) + spacing + barHeight
 		messageY := (winH - totalHeight) / 2
 		internal.RenderMultilineText(renderer, p.message, font, maxWidth, winW/2, messageY, white)
-		p.renderProgressBar(renderer, messageY, spacing)
+		p.renderProgressBar(renderer, messageY, internal.MultilineTextHeight(p.message, font, maxWidth), spacing)
 
 	case p.imageTexture != nil && messagePresent:
 		// Stack the image above the message as one vertically-centered group so
@@ -264,7 +264,7 @@ func (p *processMessage) render(renderer *sdl.Renderer) {
 	}
 }
 
-func (p *processMessage) renderProgressBar(renderer *sdl.Renderer, messageY, spacing int32) {
+func (p *processMessage) renderProgressBar(renderer *sdl.Renderer, messageY, messageHeight, spacing int32) {
 	windowWidth := p.window.GetWidth()
 
 	barWidth := windowWidth * 3 / 4
@@ -273,8 +273,10 @@ func (p *processMessage) renderProgressBar(renderer *sdl.Renderer, messageY, spa
 	}
 	barHeight := int32(40)
 	barX := (windowWidth - barWidth) / 2
-	// Position progress bar relative to the message with consistent spacing
-	barY := messageY + int32(internal.Fonts.SmallFont.Height()) + spacing
+	// The message is centred on messageY: the bar keeps the same gap below
+	// its last line however many lines it wraps to (half a line plus spacing).
+	lineHeight := int32(internal.Fonts.SmallFont.Height())
+	barY := messageY + messageHeight/2 + lineHeight/2 + spacing
 
 	progressBarBg := sdl.Rect{
 		X: barX,
