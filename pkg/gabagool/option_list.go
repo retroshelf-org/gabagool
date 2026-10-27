@@ -55,6 +55,7 @@ type OptionListSettings struct {
 	ConfirmButton         constants.VirtualButton // Default: VirtualButtonStart
 	StatusBar             StatusBarOptions
 	ListPickerButton      constants.VirtualButton // Button to show a list picker for standard options
+	BackgroundColor       sdl.Color               // Screen background when no theme background is drawn; black when unset
 }
 
 // ItemWithOptions represents a menu item with multiple choices.
@@ -125,6 +126,7 @@ type internalOptionsListSettings struct {
 	ConfirmButton         constants.VirtualButton
 	StatusBar             StatusBarOptions
 	ListPickerButton      constants.VirtualButton
+	BackgroundColor       sdl.Color
 }
 
 type optionsListController struct {
@@ -265,6 +267,7 @@ func OptionsList(title string, listOptions OptionListSettings, items []ItemWithO
 	optionsListController.Settings.ActionButton = listOptions.ActionButton
 	optionsListController.Settings.SecondaryActionButton = listOptions.SecondaryActionButton
 	optionsListController.Settings.StatusBar = listOptions.StatusBar
+	optionsListController.Settings.BackgroundColor = listOptions.BackgroundColor
 	optionsListController.Settings.ListPickerButton = listOptions.ListPickerButton
 
 	// Use provided ConfirmButton or default to VirtualButtonStart
@@ -324,7 +327,8 @@ func OptionsList(title string, listOptions OptionListSettings, items []ItemWithO
 		if window.Background != nil {
 			window.RenderBackground()
 		} else {
-			renderer.SetDrawColor(0, 0, 0, 255)
+			bg := optionsListController.Settings.BackgroundColor
+			renderer.SetDrawColor(bg.R, bg.G, bg.B, 255)
 			renderer.Clear()
 		}
 
