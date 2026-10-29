@@ -504,10 +504,12 @@ func (c *selectionMessageController) renderCard(renderer *sdl.Renderer, window *
 	room := footerTop - top - margin - spacing - buttonHeight
 	// Lines that don't fit between the title and the buttons step down a size, then another.
 	smaller := map[MessageSize]MessageSize{MessageSizeLarge: MessageSizeMedium, MessageSizeMedium: MessageSizeSmall, MessageSizeSmall: MessageSizeSmall}
+	// Lines sit a little apart, as wrapped text's own lines do.
+	lineGap := int32(8)
 	measure := func() int32 {
 		height := int32(0)
 		for _, line := range lines {
-			height += line.Gap + c.calculateTextHeight(line.Text, fontOf(line.Size), maxWidth)
+			height += line.Gap + c.calculateTextHeight(line.Text, fontOf(line.Size), maxWidth) + lineGap
 		}
 		return height
 	}
@@ -533,7 +535,7 @@ func (c *selectionMessageController) renderCard(renderer *sdl.Renderer, window *
 		}
 		y += line.Gap
 		internal.RenderMultilineText(renderer, line.Text, fontOf(line.Size), maxWidth, centerX, y, color, constants.TextAlignCenter)
-		y += c.calculateTextHeight(line.Text, fontOf(line.Size), maxWidth)
+		y += c.calculateTextHeight(line.Text, fontOf(line.Size), maxWidth) + lineGap
 	}
 	c.renderButtons(renderer, centerX, y+spacing, buttonFont, buttonHeight, theme)
 
