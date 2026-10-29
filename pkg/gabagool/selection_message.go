@@ -22,6 +22,39 @@ type SelectionMessageSettings struct {
 	InitialSelection int
 	// StatusBar configures the optional status bar in the top-right corner
 	StatusBar StatusBarOptions
+	// BackgroundColor fills the screen behind the message (default: black)
+	BackgroundColor sdl.Color
+	// Title, when set, heads the screen at the top left, with TitleNote
+	// (such as "1 of 3") at the top right
+	Title     string
+	TitleNote string
+	// Lines, when set, are shown instead of the message, each in its own
+	// size and colour
+	Lines []MessageLine
+	// Buttons draws the options side by side as buttons, the selected one
+	// filled, rather than as < one | two >
+	Buttons bool
+	// Vertical ends the message on up and down too, as Moved -1 and 1, so
+	// the caller can show the one before or after
+	Vertical bool
+}
+
+// MessageSize is a MessageLine's text size.
+type MessageSize int
+
+const (
+	MessageSizeMedium MessageSize = iota
+	MessageSizeLarge
+	MessageSizeSmall
+)
+
+// MessageLine is one line of a SelectionMessage. A zero Color is the
+// theme's text colour; Gap is space above the line.
+type MessageLine struct {
+	Text  string
+	Size  MessageSize
+	Color sdl.Color
+	Gap   int32
 }
 
 // SelectionMessageResult represents the result of a selection message.
@@ -30,6 +63,9 @@ type SelectionMessageResult struct {
 	SelectedIndex int
 	// SelectedValue is the value of the selected option
 	SelectedValue interface{}
+	// Moved is -1 or 1 when up or down ended a Vertical message, 0 when
+	// the selection was confirmed
+	Moved int
 }
 
 // SelectionOption represents a selectable option in the selection message.
@@ -56,6 +92,8 @@ type selectionMessageController struct {
 	lastInputTime     time.Time
 	confirmed         bool
 	cancelled         bool
+	settings          SelectionMessageSettings
+	moved             int
 }
 
 const maxVisibleOptions = 3
@@ -81,6 +119,7 @@ func SelectionMessage(message string, options []SelectionOption, footerHelpItems
 		footerHelpItems: footerHelpItems,
 		statusBar:       settings.StatusBar,
 		inputDelay:      constants.DefaultInputDelay,
+		settings:        settings,
 	}
 
 	if controller.confirmButton == constants.VirtualButtonUnassigned {
@@ -116,6 +155,7 @@ func SelectionMessage(message string, options []SelectionOption, footerHelpItems
 	return &SelectionMessageResult{
 		SelectedIndex: controller.selectedIndex,
 		SelectedValue: controller.options[controller.selectedIndex].Value,
+		Moved:         controller.moved,
 	}, nil
 }
 
@@ -144,6 +184,14 @@ func (c *selectionMessageController) handleEvents() bool {
 				c.navigateLeft()
 			case constants.VirtualButtonRight:
 				c.navigateRight()
+			case constants.VirtualButtonUp, constants.VirtualButtonDown:
+				if c.settings.Vertical {
+					c.moved = 1
+					if inputEvent.Button == constants.VirtualButtonUp {
+						c.moved = -1
+					}
+					return false
+				}
 			case c.confirmButton, constants.VirtualButtonStart:
 				c.confirmed = true
 				return false
@@ -183,11 +231,20 @@ func (c *selectionMessageController) navigateRight() {
 }
 
 func (c *selectionMessageController) render(renderer *sdl.Renderer, window *internal.Window) {
-	renderer.SetDrawColor(0, 0, 0, 255)
+	background := c.settings.BackgroundColor
+	if background == (sdl.Color{}) {
+		background = sdl.Color{A: 255}
+	}
+	renderer.SetDrawColor(background.R, background.G, background.B, background.A)
 	renderer.Clear()
 
 	windowWidth := window.GetWidth()
 	windowHeight := window.GetHeight()
+
+	if c.settings.Title != "" || len(c.settings.Lines) > 0 || c.settings.Buttons {
+		c.renderCard(renderer, window, background)
+		return
+	}
 
 	messageFont := internal.Fonts.LargeFont
 	optionFont := internal.Fonts.MediumFont
@@ -398,4 +455,100 @@ func (c *selectionMessageController) renderText(renderer *sdl.Renderer, font *tt
 
 	rect := sdl.Rect{X: x, Y: y, W: surface.W, H: surface.H}
 	renderer.Copy(texture, nil, &rect)
+}
+
+// renderCard draws a titled message of styled lines over side-by-side
+// buttons, all centred in the space between the title and the footer.
+func (c *selectionMessageController) renderCard(renderer *sdl.Renderer, window *internal.Window, background sdl.Color) {
+	windowWidth, windowHeight := window.GetWidth(), window.GetHeight()
+	theme := internal.GetTheme()
+	margin := int32(20)
+	top := margin
+	if c.settings.Title != "" {
+		titleFont := internal.Fonts.LargeFont
+		if c.settings.TitleNote != "" {
+			note, noteW, noteH := internal.RenderTextCached(renderer, internal.Fonts.SmallFont, c.settings.TitleNote, theme.TextColor)
+			renderer.Copy(note, nil, &sdl.Rect{X: windowWidth - margin - 10 - noteW, Y: top + (int32(titleFont.Height())-noteH)/2, W: noteW, H: noteH})
+		}
+		title, titleW, titleH := internal.RenderTextCached(renderer, titleFont, c.settings.Title, theme.TextColor)
+		renderer.Copy(title, nil, &sdl.Rect{X: margin + 10, Y: top, W: titleW, H: titleH})
+		top += titleH
+	}
+
+	maxWidth := int32(float64(windowWidth) * 0.85)
+	if maxWidth > 900 {
+		maxWidth = 900
+	}
+	lines := c.settings.Lines
+	if len(lines) == 0 {
+		lines = []MessageLine{{Text: c.message, Size: MessageSizeLarge}}
+	}
+	fontOf := func(size MessageSize) *ttf.Font {
+		switch size {
+		case MessageSizeLarge:
+			return internal.Fonts.LargeFont
+		case MessageSizeSmall:
+			return internal.Fonts.SmallFont
+		}
+		return internal.Fonts.MediumFont
+	}
+	textHeight := int32(0)
+	for _, line := range lines {
+		textHeight += line.Gap + c.calculateTextHeight(line.Text, fontOf(line.Size), maxWidth)
+	}
+	buttonFont := internal.Fonts.MediumFont
+	buttonHeight := int32(buttonFont.Height()) + 24
+	spacing := int32(36)
+	footerTop := windowHeight - int32(internal.Fonts.SmallFont.Height()) - 3*margin
+	y := top + (footerTop-top-textHeight-spacing-buttonHeight)/2
+	centerX := windowWidth / 2
+	for _, line := range lines {
+		color := line.Color
+		if color == (sdl.Color{}) {
+			color = theme.TextColor
+		}
+		y += line.Gap
+		internal.RenderMultilineText(renderer, line.Text, fontOf(line.Size), maxWidth, centerX, y, color, constants.TextAlignCenter)
+		y += c.calculateTextHeight(line.Text, fontOf(line.Size), maxWidth)
+	}
+	c.renderButtons(renderer, centerX, y+spacing, buttonFont, buttonHeight, theme)
+
+	renderStatusBar(renderer, internal.Fonts.SmallFont, c.statusBar, internal.UniformPadding(20))
+	renderFooter(renderer, internal.Fonts.SmallFont, c.footerHelpItems, 20, &background, true)
+	window.Present()
+}
+
+// renderButtons draws the options side by side, of one width, the selected
+// one filled with the highlight colour.
+func (c *selectionMessageController) renderButtons(renderer *sdl.Renderer, centerX, y int32, font *ttf.Font, height int32, theme internal.Theme) {
+	width := int32(0)
+	for _, opt := range c.options {
+		if w := c.getTextWidth(font, opt.DisplayName) + 80; w > width {
+			width = w
+		}
+	}
+	gap := int32(24)
+	total := int32(len(c.options))*width + int32(len(c.options)-1)*gap
+	x := centerX - total/2
+	for i, opt := range c.options {
+		rect := sdl.Rect{X: x, Y: y, W: width, H: height}
+		textColor := theme.TextColor
+		if i == c.selectedIndex {
+			internal.DrawRoundedRect(renderer, &rect, height/2, theme.HighlightColor)
+			textColor = theme.HighlightedTextColor
+		} else {
+			edge := theme.TextColor
+			edge.A = 110
+			internal.DrawRoundedRect(renderer, &rect, height/2, edge)
+			inner := sdl.Rect{X: rect.X + 3, Y: rect.Y + 3, W: rect.W - 6, H: rect.H - 6}
+			fill := c.settings.BackgroundColor
+			if fill == (sdl.Color{}) {
+				fill = sdl.Color{A: 255}
+			}
+			internal.DrawRoundedRect(renderer, &inner, inner.H/2, fill)
+		}
+		textW := c.getTextWidth(font, opt.DisplayName)
+		c.renderText(renderer, font, opt.DisplayName, x+(width-textW)/2, y+(height-int32(font.Height()))/2, textColor)
+		x += width + gap
+	}
 }
