@@ -181,9 +181,14 @@ func (c *selectionMessageController) handleEvents() bool {
 
 			switch inputEvent.Button {
 			case constants.VirtualButtonLeft:
-				c.navigateLeft()
+				// Buttons side by side stop at the ends: left from the first stays on it.
+				if !c.settings.Buttons || c.selectedIndex > 0 {
+					c.navigateLeft()
+				}
 			case constants.VirtualButtonRight:
-				c.navigateRight()
+				if !c.settings.Buttons || c.selectedIndex < len(c.options)-1 {
+					c.navigateRight()
+				}
 			case constants.VirtualButtonUp, constants.VirtualButtonDown:
 				if c.settings.Vertical {
 					c.moved = 1
@@ -475,7 +480,7 @@ func (c *selectionMessageController) renderCard(renderer *sdl.Renderer, window *
 		top += titleH
 	}
 
-	maxWidth := int32(float64(windowWidth) * 0.85)
+	maxWidth := windowWidth - 4*margin
 	if maxWidth > 900 {
 		maxWidth = 900
 	}
@@ -492,15 +497,34 @@ func (c *selectionMessageController) renderCard(renderer *sdl.Renderer, window *
 		}
 		return internal.Fonts.MediumFont
 	}
-	textHeight := int32(0)
-	for _, line := range lines {
-		textHeight += line.Gap + c.calculateTextHeight(line.Text, fontOf(line.Size), maxWidth)
-	}
 	buttonFont := internal.Fonts.MediumFont
 	buttonHeight := int32(buttonFont.Height()) + 24
-	spacing := int32(36)
+	spacing := int32(24)
 	footerTop := windowHeight - int32(internal.Fonts.SmallFont.Height()) - 3*margin
-	y := top + (footerTop-top-textHeight-spacing-buttonHeight)/2
+	room := footerTop - top - margin - spacing - buttonHeight
+	// Lines that don't fit between the title and the buttons step down a size, then another.
+	smaller := map[MessageSize]MessageSize{MessageSizeLarge: MessageSizeMedium, MessageSizeMedium: MessageSizeSmall, MessageSizeSmall: MessageSizeSmall}
+	measure := func() int32 {
+		height := int32(0)
+		for _, line := range lines {
+			height += line.Gap + c.calculateTextHeight(line.Text, fontOf(line.Size), maxWidth)
+		}
+		return height
+	}
+	textHeight := measure()
+	for step := 0; step < 2 && textHeight > room; step++ {
+		shrunk := make([]MessageLine, len(lines))
+		for i, line := range lines {
+			shrunk[i] = line
+			shrunk[i].Size = smaller[line.Size]
+		}
+		lines = shrunk
+		textHeight = measure()
+	}
+	y := top + margin
+	if textHeight < room {
+		y += (room - textHeight) / 2
+	}
 	centerX := windowWidth / 2
 	for _, line := range lines {
 		color := line.Color
