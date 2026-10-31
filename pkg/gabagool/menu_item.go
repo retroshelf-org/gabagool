@@ -19,7 +19,6 @@ type MenuItem struct {
 type ListResult struct {
 	Items           []MenuItem
 	Selected        []int      // Indices of selected items (always a slice, even for single selection)
-	Tab             int        // The tab the list ended on, when it has Tabs
 	Action          ListAction // The action taken when exiting (Selected or Triggered)
 	VisiblePosition int        // Position of first selected item relative to VisibleStartIndex (for scroll restoration)
 }

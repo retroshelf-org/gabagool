@@ -71,11 +71,12 @@ type ListOptions struct {
 	OnSelect  func(index int, item *MenuItem) // Called when selection changes
 	OnReorder func(from, to int)              // Called when items are reordered
 	// Tabs, when set, draw as a strip between the header and the items. L1/R1
-	// and left/right move between them (instead of paging), ending the list
-	// with ListActionTabChanged and the new tab in ListResult.Tab; the caller
-	// shows that tab's items. SelectedTab is the tab shown.
+	// and left/right move between them (instead of paging) when OnTabChange
+	// is set, which gives the tab's items, footer and header; the list shows
+	// them in place. SelectedTab is the tab shown.
 	Tabs        []ListTab
 	SelectedTab int
+	OnTabChange func(tab int) ListUpdate
 
 	OnL1 func(selectedIndex int) int // Custom handler for L1 button
 	OnR1 func(selectedIndex int) int // Custom handler for R1 button
@@ -138,6 +139,12 @@ type listController struct {
 
 	// fittedRows is a tabbed list's rows as last measured (fitRowsBelow).
 	fittedRows int
+	// pendingTab is the tab switchTab moved to, shown on the next frame.
+	pendingTab *int
+	// subtitled is whether any row has a second line; subtitleCuts are
+	// second lines cut to their width, by width and text.
+	subtitled    bool
+	subtitleCuts map[string]string
 }
 
 func newListController(options ListOptions) *listController {
@@ -161,6 +168,8 @@ func newListController(options ListOptions) *listController {
 	}
 
 	return &listController{
+		subtitled:        hasSubtitles(options.Items),
+		subtitleCuts:     map[string]string{},
 		Options:          options,
 		SelectedItems:    selectedItems,
 		MultiSelect:      options.InitialMultiSelectMode,
@@ -220,6 +229,7 @@ func List(options ListOptions) (*ListResult, error) {
 		}
 
 		lc.handleDirectionalRepeats()
+		lc.showPendingTab(window)
 		lc.refresh(window)
 
 		renderer.SetDrawColor(0, 0, 0, 255)
@@ -277,7 +287,7 @@ func (lc *listController) handleInput(event interface{}, running *bool, result *
 			return
 		}
 
-		if lc.switchTab(inputEvent.Button, running, result) {
+		if lc.switchTab(inputEvent.Button) {
 			return
 		}
 
@@ -594,7 +604,14 @@ func (lc *listController) refresh(window *internal.Window) {
 	if i := lc.Options.SelectedIndex; i >= 0 && i < len(lc.Options.Items) {
 		current = &lc.Options.Items[i]
 	}
+	lc.applyUpdate(window, update, current)
+}
+
+// applyUpdate shows an update's items, footer, header and tabs, keeping the
+// cursor on current when it is still there.
+func (lc *listController) applyUpdate(window *internal.Window, update ListUpdate, current *MenuItem) {
 	lc.Options.Items = update.Items
+	lc.subtitled = hasSubtitles(lc.Options.Items)
 	lc.Options.FooterHelpItems = update.FooterHelpItems
 	lc.Options.Header = update.Header
 	if update.Tabs != nil {
@@ -900,7 +917,7 @@ func (lc *listController) renderContent(window *internal.Window, visibleItems []
 	if len(lc.Options.Tabs) > 0 {
 		x, width := lc.headerBounds(renderer)
 		itemStartY = renderListTabs(renderer, lc.Options.Tabs, lc.Options.SelectedTab, x, itemStartY, width) + lc.headerSpacing()
-		lc.fitRowsBelow(renderer, itemStartY)
+		lc.fitRowsBelow(itemStartY)
 	}
 
 	if len(lc.Options.Items) == 0 {
@@ -950,7 +967,7 @@ func (lc *listController) renderItems(renderer *sdl.Renderer, font *ttf.Font, vi
 	pillHeight := lc.rowHeight()
 	pillPadding := int32(float32(40) * scaleFactor)
 	radius := int32(float32(30) * scaleFactor)
-	if lc.hasSubtitles() {
+	if lc.subtitled {
 		radius = int32(float32(20) * scaleFactor)
 	}
 
@@ -974,7 +991,7 @@ func (lc *listController) renderItems(renderer *sdl.Renderer, font *ttf.Font, vi
 		if item.Selected || item.Focused {
 			_, bgColor := lc.getItemColors(item)
 			pillWidth := internal.Min32(maxPillWidth, lc.measureText(font, itemText)+pillPadding)
-			if item.Detail != "" || lc.hasSubtitles() {
+			if item.Detail != "" || lc.subtitled {
 				// A row with more than its name reads across the screen.
 				pillWidth = maxPillWidth
 			}
@@ -988,15 +1005,15 @@ func (lc *listController) renderItems(renderer *sdl.Renderer, font *ttf.Font, vi
 			internal.DrawRoundedRect(renderer, &pillRect, radius, bgColor)
 		}
 
-		textWidth := maxTextWidth
-		if item.Detail != "" {
-			textWidth -= lc.renderItemDetail(renderer, item, itemY, pillHeight, maxPillWidth)
-		}
 		lineY, lineHeight := itemY, pillHeight
 		if item.Subtitle != "" {
 			lineHeight = pillHeight - lc.subtitleHeight()
 			lc.renderItemSubtitle(renderer, item, itemY+lineHeight-int32(float32(10)*scaleFactor), maxTextWidth)
 			lineY += int32(float32(4) * scaleFactor)
+		}
+		textWidth := maxTextWidth
+		if item.Detail != "" {
+			textWidth -= lc.renderItemDetail(renderer, item, itemY, lineHeight, maxPillWidth)
 		}
 		lc.renderItemText(renderer, font, itemText, item, globalIndex, lineY, lineHeight, textWidth)
 	}

@@ -1,7 +1,9 @@
 package gabagool
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 
 	"github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/constants"
 	"github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/internal"
@@ -59,20 +61,16 @@ func renderListTabs(renderer *sdl.Renderer, tabs []ListTab, selected int, x, y, 
 	gap := int32(12 * scale)
 	underline := int32(4 * scale)
 	for i, tab := range tabs {
+		accent := cmp.Or(tab.Color, theme.AccentColor)
 		color := internal.MutedTextColor()
-		accent := tab.Color
-		if accent.A == 0 {
-			accent = theme.AccentColor
-		}
-		if tab.Color.A > 0 {
+		switch {
+		case i == selected && tab.Color.A > 0:
 			color = tab.Color
-			color.A = 150
-		}
-		if i == selected {
+		case i == selected:
 			color = theme.TextColor
-			if tab.Color.A > 0 {
-				color = tab.Color
-			}
+		case tab.Color.A > 0:
+			color = tab.Color
+			color.A = internal.MutedTextColor().A
 		}
 		text := tab.Label
 		if tab.Count > 0 {
@@ -95,10 +93,11 @@ func renderListTabs(renderer *sdl.Renderer, tabs []ListTab, selected int, x, y, 
 }
 
 // switchTab moves to the tab before or after the shown one on L1/R1 or
-// left/right, ending the list so its caller shows that tab. It reports
-// whether the button was a tab switch, which a list without tabs never has.
-func (lc *listController) switchTab(button constants.VirtualButton, running *bool, result *ListResult) bool {
-	if len(lc.Options.Tabs) == 0 || lc.MultiSelect || lc.ReorderMode {
+// left/right, in place: the list's OnTabChange gives the tab's items, which
+// show on the next frame. It reports whether the button switches tabs,
+// which it never does in a list without them.
+func (lc *listController) switchTab(button constants.VirtualButton) bool {
+	if len(lc.Options.Tabs) == 0 || lc.Options.OnTabChange == nil || lc.MultiSelect || lc.ReorderMode {
 		return false
 	}
 	step := 0
@@ -110,75 +109,78 @@ func (lc *listController) switchTab(button constants.VirtualButton, running *boo
 	default:
 		return false
 	}
-	next := lc.Options.SelectedTab + step
-	if next < 0 || next >= len(lc.Options.Tabs) {
-		return true // the end of the strip: nothing to move to, and no paging either
-	}
-	*running = false
-	result.Action = ListActionTabChanged
-	result.Tab = next
-	if len(lc.Options.Items) > 0 {
-		result.Selected = []int{lc.Options.SelectedIndex}
+	// At the end of the strip there is nothing to move to, and no paging.
+	if next := lc.Options.SelectedTab + step; next >= 0 && next < len(lc.Options.Tabs) {
+		lc.pendingTab = &next
 	}
 	return true
 }
 
-// hasSubtitles is whether any row has a second line, which makes every row
-// tall enough for one, so the rows stay even.
-func (lc *listController) hasSubtitles() bool {
-	for _, item := range lc.Options.Items {
-		if item.Subtitle != "" {
-			return true
-		}
+// showPendingTab shows the tab switchTab moved to, its cursor on its first
+// row.
+func (lc *listController) showPendingTab(window *internal.Window) {
+	if lc.pendingTab == nil {
+		return
 	}
-	return false
+	update := lc.Options.OnTabChange(*lc.pendingTab)
+	lc.pendingTab = nil
+	lc.Options.SelectedIndex, lc.Options.VisibleStartIndex = 0, 0
+	lc.applyUpdate(window, update, nil)
+}
+
+// hasSubtitles is whether any row has a second line.
+func hasSubtitles(items []MenuItem) bool {
+	return slices.ContainsFunc(items, func(item MenuItem) bool { return item.Subtitle != "" })
 }
 
 func (lc *listController) subtitleHeight() int32 {
 	return int32(internal.Fonts.TinyFont.Height())
 }
 
-// rowHeight is a row's height: a pill, taller when rows have second lines.
+// rowHeight is a row's height: a pill, taller when rows have second lines,
+// so the rows stay even.
 func (lc *listController) rowHeight() int32 {
 	height := int32(60 * internal.GetScaleFactor())
-	if lc.hasSubtitles() {
+	if lc.subtitled {
 		height += lc.subtitleHeight()
 	}
 	return height
 }
 
+// secondaryTextColor is a row's detail and second line: muted, or the
+// highlighted text's colour, softened, on the focused pill.
+func secondaryTextColor(item MenuItem) sdl.Color {
+	if !item.Focused {
+		return internal.MutedTextColor()
+	}
+	color := internal.GetTheme().HighlightedTextColor
+	color.A = 170
+	return color
+}
+
 // renderItemDetail draws a row's detail at its right edge, centred on its
 // first line, and returns the width it takes from the row's text.
-func (lc *listController) renderItemDetail(renderer *sdl.Renderer, item MenuItem, itemY, pillHeight, pillWidth int32) int32 {
-	scale := internal.GetScaleFactor()
-	color := internal.MutedTextColor()
-	if item.Focused {
-		color = internal.GetTheme().HighlightedTextColor
-		color.A = 170
-	}
-	texture, w, h := internal.RenderTextCached(renderer, internal.Fonts.TinyFont, item.Detail, color)
+func (lc *listController) renderItemDetail(renderer *sdl.Renderer, item MenuItem, itemY, lineHeight, pillWidth int32) int32 {
+	texture, w, h := internal.RenderTextCached(renderer, internal.Fonts.TinyFont, item.Detail, secondaryTextColor(item))
 	if texture == nil {
 		return 0
 	}
-	padding := int32(20 * scale)
-	lineHeight := pillHeight
-	if item.Subtitle != "" {
-		lineHeight -= lc.subtitleHeight()
-	}
+	padding := int32(20 * internal.GetScaleFactor())
 	renderer.Copy(texture, nil, &sdl.Rect{X: lc.Options.Margins.Left + pillWidth - padding - w, Y: itemY + (lineHeight-h)/2, W: w, H: h})
 	return w + padding
 }
 
-// renderItemSubtitle draws a row's second line at y, clipped to its width.
+// renderItemSubtitle draws a row's second line at y, cut to its width once
+// rather than every frame.
 func (lc *listController) renderItemSubtitle(renderer *sdl.Renderer, item MenuItem, y, maxWidth int32) {
-	color := internal.MutedTextColor()
-	if item.Focused {
-		color = internal.GetTheme().HighlightedTextColor
-		color.A = 170
-	}
 	font := internal.Fonts.TinyFont
-	text := lc.truncateText(font, item.Subtitle, maxWidth)
-	texture, w, h := internal.RenderTextCached(renderer, font, text, color)
+	key := fmt.Sprintf("%d\x00%s", maxWidth, item.Subtitle)
+	text, ok := lc.subtitleCuts[key]
+	if !ok {
+		text = lc.truncateText(font, item.Subtitle, maxWidth)
+		lc.subtitleCuts[key] = text
+	}
+	texture, w, h := internal.RenderTextCached(renderer, font, text, secondaryTextColor(item))
 	if texture == nil {
 		return
 	}
@@ -188,11 +190,9 @@ func (lc *listController) renderItemSubtitle(renderer *sdl.Renderer, item MenuIt
 // fitRowsBelow sizes a tabbed list to the rows that fit between where they
 // start and the footer, which calculateMaxVisibleItems only estimates: with
 // a header and a tab strip above them its margin costs a row.
-func (lc *listController) fitRowsBelow(renderer *sdl.Renderer, top int32) {
-	scale := internal.GetScaleFactor()
-	_, screenHeight, _ := renderer.GetOutputSize()
-	footerTop := screenHeight - lc.Options.Margins.Bottom - int32(50*scale) - int32(10*scale)
-	rows := max(1, int((footerTop-top)/(lc.rowHeight()+lc.Options.ItemSpacing)))
+func (lc *listController) fitRowsBelow(top int32) {
+	gap := int32(10 * internal.GetScaleFactor())
+	rows := max(1, int((footerY(lc.Options.Margins.Bottom)-gap-top)/(lc.rowHeight()+lc.Options.ItemSpacing)))
 	lc.fittedRows = rows
 	if rows == lc.Options.MaxVisibleItems {
 		return

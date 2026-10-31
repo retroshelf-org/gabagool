@@ -67,8 +67,8 @@ func renderFooter(
 
 	scaleFactor := internal.GetScaleFactor()
 	window := internal.GetWindow()
-	windowWidth, windowHeight := window.GetWidth(), window.GetHeight()
-	y := windowHeight - bottomPadding - int32(float32(50)*scaleFactor)
+	windowWidth := window.GetWidth()
+	y := footerY(bottomPadding)
 	outerPillHeight := int32(float32(60) * scaleFactor)
 
 	if background != nil {
@@ -259,4 +259,9 @@ func renderGroupAsContinuousPill(
 
 		currentX += helpW + rightPadding
 	}
+}
+
+// footerY is the top of the footer's pills, above the bottom padding.
+func footerY(bottomPadding int32) int32 {
+	return internal.GetWindow().GetHeight() - bottomPadding - int32(float32(50)*internal.GetScaleFactor())
 }
