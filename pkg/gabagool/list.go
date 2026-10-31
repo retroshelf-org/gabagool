@@ -229,7 +229,12 @@ func List(options ListOptions) (*ListResult, error) {
 		}
 
 		lc.handleDirectionalRepeats()
-		lc.showPendingTab(window)
+		// A press that ended the list in the same frame chose a row of the
+		// tab shown; a switch queued with it would pair that row with
+		// another tab's items.
+		if running {
+			lc.showPendingTab(window)
+		}
 		lc.refresh(window)
 
 		renderer.SetDrawColor(0, 0, 0, 255)
