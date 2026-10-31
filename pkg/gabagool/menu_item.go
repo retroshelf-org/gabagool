@@ -3,6 +3,8 @@ package gabagool
 // MenuItem represents a single item in a List component.
 type MenuItem struct {
 	Text               string      // Display text for the item
+	Detail             string      // Muted text drawn at the row's right edge
+	Subtitle           string      // A smaller muted line under Text; a list with one has taller rows
 	Selected           bool        // Whether this item is selected (for multi-select mode)
 	Focused            bool        // Whether this item has focus (managed by List)
 	NotMultiSelectable bool        // Prevent this item from being multi-selected
@@ -17,6 +19,7 @@ type MenuItem struct {
 type ListResult struct {
 	Items           []MenuItem
 	Selected        []int      // Indices of selected items (always a slice, even for single selection)
+	Tab             int        // The tab the list ended on, when it has Tabs
 	Action          ListAction // The action taken when exiting (Selected or Triggered)
 	VisiblePosition int        // Position of first selected item relative to VisibleStartIndex (for scroll restoration)
 }

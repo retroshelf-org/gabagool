@@ -70,8 +70,15 @@ type ListOptions struct {
 
 	OnSelect  func(index int, item *MenuItem) // Called when selection changes
 	OnReorder func(from, to int)              // Called when items are reordered
-	OnL1      func(selectedIndex int) int     // Custom handler for L1 button
-	OnR1      func(selectedIndex int) int     // Custom handler for R1 button
+	// Tabs, when set, draw as a strip between the header and the items. L1/R1
+	// and left/right move between them (instead of paging), ending the list
+	// with ListActionTabChanged and the new tab in ListResult.Tab; the caller
+	// shows that tab's items. SelectedTab is the tab shown.
+	Tabs        []ListTab
+	SelectedTab int
+
+	OnL1 func(selectedIndex int) int // Custom handler for L1 button
+	OnR1 func(selectedIndex int) int // Custom handler for R1 button
 }
 
 // DefaultListOptions returns a ListOptions with sensible defaults for the given title and items.
@@ -80,6 +87,9 @@ type ListUpdate struct {
 	Items           []MenuItem
 	FooterHelpItems []FooterHelpItem
 	Header          *ListHeader
+	// Tabs and SelectedTab replace the list's when Tabs is set.
+	Tabs        []ListTab
+	SelectedTab int
 }
 
 func DefaultListOptions(title string, items []MenuItem) ListOptions {
@@ -125,6 +135,9 @@ type listController struct {
 	textureCache    *internal.TextureCache
 
 	directionalInput internal.DirectionalInput
+
+	// fittedRows is a tabbed list's rows as last measured (fitRowsBelow).
+	fittedRows int
 }
 
 func newListController(options ListOptions) *listController {
@@ -261,6 +274,10 @@ func (lc *listController) handleInput(event interface{}, running *bool, result *
 
 		if lc.ReorderMode && !lc.isDirectionalInput(inputEvent.Button) {
 			lc.ReorderMode = false
+			return
+		}
+
+		if lc.switchTab(inputEvent.Button, running, result) {
 			return
 		}
 
@@ -580,6 +597,9 @@ func (lc *listController) refresh(window *internal.Window) {
 	lc.Options.Items = update.Items
 	lc.Options.FooterHelpItems = update.FooterHelpItems
 	lc.Options.Header = update.Header
+	if update.Tabs != nil {
+		lc.Options.Tabs, lc.Options.SelectedTab = update.Tabs, update.SelectedTab
+	}
 	// Scroll offsets are per row and its text; the text cache is keyed by
 	// text, so changed rows draw fresh.
 	lc.itemScrollData = make(map[int]*internal.TextScrollData)
@@ -877,6 +897,12 @@ func (lc *listController) renderContent(window *internal.Window, visibleItems []
 		itemStartY = renderListHeader(renderer, lc.Options.Header, x, itemStartY, width, lc.textureCache) + lc.headerSpacing()
 	}
 
+	if len(lc.Options.Tabs) > 0 {
+		x, width := lc.headerBounds(renderer)
+		itemStartY = renderListTabs(renderer, lc.Options.Tabs, lc.Options.SelectedTab, x, itemStartY, width) + lc.headerSpacing()
+		lc.fitRowsBelow(renderer, itemStartY)
+	}
+
 	if len(lc.Options.Items) == 0 {
 		lc.renderEmptyMessage(renderer, internal.Fonts.MediumFont, itemStartY)
 	} else {
@@ -921,8 +947,12 @@ func (lc *listController) imageIsDisplayed() bool {
 func (lc *listController) renderItems(renderer *sdl.Renderer, font *ttf.Font, visibleItems []MenuItem, startY int32) {
 	scaleFactor := internal.GetScaleFactor()
 
-	pillHeight := int32(float32(60) * scaleFactor)
+	pillHeight := lc.rowHeight()
 	pillPadding := int32(float32(40) * scaleFactor)
+	radius := int32(float32(30) * scaleFactor)
+	if lc.hasSubtitles() {
+		radius = int32(float32(20) * scaleFactor)
+	}
 
 	screenWidth, _, _ := renderer.GetOutputSize()
 	availableWidth := screenWidth - lc.Options.Margins.Left - lc.Options.Margins.Right
@@ -944,6 +974,10 @@ func (lc *listController) renderItems(renderer *sdl.Renderer, font *ttf.Font, vi
 		if item.Selected || item.Focused {
 			_, bgColor := lc.getItemColors(item)
 			pillWidth := internal.Min32(maxPillWidth, lc.measureText(font, itemText)+pillPadding)
+			if item.Detail != "" || lc.hasSubtitles() {
+				// A row with more than its name reads across the screen.
+				pillWidth = maxPillWidth
+			}
 
 			pillRect := sdl.Rect{
 				X: lc.Options.Margins.Left,
@@ -951,10 +985,20 @@ func (lc *listController) renderItems(renderer *sdl.Renderer, font *ttf.Font, vi
 				W: pillWidth,
 				H: pillHeight,
 			}
-			internal.DrawRoundedRect(renderer, &pillRect, int32(float32(30)*scaleFactor), bgColor)
+			internal.DrawRoundedRect(renderer, &pillRect, radius, bgColor)
 		}
 
-		lc.renderItemText(renderer, font, itemText, item, globalIndex, itemY, pillHeight, maxTextWidth)
+		textWidth := maxTextWidth
+		if item.Detail != "" {
+			textWidth -= lc.renderItemDetail(renderer, item, itemY, pillHeight, maxPillWidth)
+		}
+		lineY, lineHeight := itemY, pillHeight
+		if item.Subtitle != "" {
+			lineHeight = pillHeight - lc.subtitleHeight()
+			lc.renderItemSubtitle(renderer, item, itemY+lineHeight-int32(float32(10)*scaleFactor), maxTextWidth)
+			lineY += int32(float32(4) * scaleFactor)
+		}
+		lc.renderItemText(renderer, font, itemText, item, globalIndex, lineY, lineHeight, textWidth)
 	}
 }
 
@@ -1228,9 +1272,10 @@ func (lc *listController) shouldScroll(font *ttf.Font, text string, maxWidth int
 }
 
 func (lc *listController) calculateMaxVisibleItems(window *internal.Window) int32 {
+	if len(lc.Options.Tabs) > 0 && lc.fittedRows > 0 {
+		return int32(lc.fittedRows)
+	}
 	scaleFactor := internal.GetScaleFactor()
-
-	pillHeight := int32(float32(60) * scaleFactor)
 
 	_, screenHeight, _ := window.Renderer.GetOutputSize()
 
@@ -1252,9 +1297,13 @@ func (lc *listController) calculateMaxVisibleItems(window *internal.Window) int3
 		headerHeight = layoutListHeader(lc.Options.Header, width).height + lc.headerSpacing()
 	}
 
+	if len(lc.Options.Tabs) > 0 {
+		headerHeight += listTabsHeight() + lc.headerSpacing()
+	}
+
 	availableHeight := screenHeight - titleHeight - headerHeight - footerHeight - (lc.StartY * 2)
 
-	itemHeightWithSpacing := pillHeight + lc.Options.ItemSpacing
+	itemHeightWithSpacing := lc.rowHeight() + lc.Options.ItemSpacing
 	maxItems := availableHeight/itemHeightWithSpacing - 1
 
 	if maxItems < 1 {

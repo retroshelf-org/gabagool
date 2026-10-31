@@ -9,6 +9,7 @@ const (
 	ListActionSecondaryTriggered                   // User triggered secondary action (Y button)
 	ListActionConfirmed                            // User confirmed selection (Start button)
 	ListActionTertiaryTriggered                    // User triggered tertiary action (Menu button)
+	ListActionTabChanged                           // User moved to another tab (L1/R1, left/right); ListResult.Tab is it
 )
 
 // DetailAction represents user actions that can occur within a Detail component.
